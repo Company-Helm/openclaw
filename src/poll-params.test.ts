@@ -24,7 +24,9 @@ describe("poll params", () => {
   );
 
   it("treats finite numeric poll params as poll creation intent", () => {
-    expect(hasPollCreationParams({ pollDurationHours: 0 })).toBe(true);
+    expect(hasPollCreationParams({ pollDurationHours: 0 })).toBe(false);
+    expect(hasPollCreationParams({ pollDurationHours: "0" })).toBe(false);
+    expect(hasPollCreationParams({ pollDurationHours: -1 })).toBe(false);
     expect(hasPollCreationParams({ pollDurationSeconds: 60 })).toBe(true);
     expect(hasPollCreationParams({ pollDurationSeconds: "60" })).toBe(true);
     expect(hasPollCreationParams({ pollDurationSeconds: "1e3" })).toBe(true);

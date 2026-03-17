@@ -268,6 +268,27 @@ describe("runMessageAction context isolation", () => {
     ).rejects.toThrow(/use action "poll" instead of "send"/i);
   });
 
+  it("allows normal send actions when poll fields are only empty defaults", async () => {
+    const result = await runDrySend({
+      cfg: slackConfig,
+      actionParams: {
+        channel: "slack",
+        target: "#C12345678",
+        message: "hi",
+        pollQuestion: "",
+        pollOption: [],
+        pollDurationHours: 0,
+        pollDurationSeconds: "0",
+        pollMulti: false,
+        pollAnonymous: false,
+        pollPublic: false,
+      },
+      toolContext: { currentChannelId: "C12345678" },
+    });
+
+    expect(result.kind).toBe("send");
+  });
+
   it.each([
     {
       name: "send when target differs from current slack channel",
