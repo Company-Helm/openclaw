@@ -7,6 +7,32 @@ import {
   runOpenAIOAuthTlsPreflight,
 } from "./provider-openai-codex-oauth-tls.js";
 
+const OPENAI_RESPONSES_WRITE_SCOPE = "api.responses.write";
+
+export function ensureOpenAIResponsesWriteScope(url: string): string {
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname !== "auth.openai.com" || parsed.pathname !== "/oauth/authorize") {
+      return url;
+    }
+    const rawScope = parsed.searchParams.get("scope");
+    if (!rawScope) {
+      return url;
+    }
+    const scopes = rawScope
+      .split(/\s+/)
+      .map((scope) => scope.trim())
+      .filter((scope) => scope.length > 0);
+    if (scopes.includes(OPENAI_RESPONSES_WRITE_SCOPE)) {
+      return url;
+    }
+    parsed.searchParams.set("scope", [...scopes, OPENAI_RESPONSES_WRITE_SCOPE].join(" "));
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+}
+
 export async function loginOpenAICodexOAuth(params: {
   prompter: WizardPrompter;
   runtime: RuntimeEnv;
@@ -49,8 +75,14 @@ export async function loginOpenAICodexOAuth(params: {
       localBrowserMessage: localBrowserMessage ?? "Complete sign-in in browser…",
     });
 
+    const onAuth = async (event: { url: string; instructions?: string }) =>
+      baseOnAuth({
+        ...event,
+        url: ensureOpenAIResponsesWriteScope(event.url),
+      });
+
     const creds = await loginOpenAICodex({
-      onAuth: baseOnAuth,
+      onAuth,
       onPrompt,
       onProgress: (msg: string) => spin.update(msg),
     });

@@ -84,7 +84,7 @@ describe("loginOpenAICodexOAuth", () => {
     expect(runtime.error).not.toHaveBeenCalled();
   });
 
-  it("passes through Pi-provided OAuth authorize URL without mutation", async () => {
+  it("adds api.responses.write to the authorize URL scope before opening the browser", async () => {
     const creds = {
       provider: "openai-codex" as const,
       access: "access-token",
@@ -111,7 +111,38 @@ describe("loginOpenAICodexOAuth", () => {
     expect(onAuthSpy).toHaveBeenCalledTimes(1);
     const event = onAuthSpy.mock.calls[0]?.[0] as { url: string };
     expect(event.url).toBe(
-      "https://auth.openai.com/oauth/authorize?scope=openid+profile+email+offline_access&state=abc",
+      "https://auth.openai.com/oauth/authorize?scope=openid+profile+email+offline_access+api.responses.write&state=abc",
+    );
+  });
+
+  it("does not duplicate api.responses.write when the authorize URL already includes it", async () => {
+    const creds = {
+      provider: "openai-codex" as const,
+      access: "access-token",
+      refresh: "refresh-token",
+      expires: Date.now() + 60_000,
+      email: "user@example.com",
+    };
+    const onAuthSpy = vi.fn();
+    mocks.createVpsAwareOAuthHandlers.mockReturnValue({
+      onAuth: onAuthSpy,
+      onPrompt: vi.fn(),
+    });
+    mocks.loginOpenAICodex.mockImplementation(
+      async (opts: { onAuth: (event: { url: string }) => Promise<void> }) => {
+        await opts.onAuth({
+          url: "https://auth.openai.com/oauth/authorize?scope=openid+profile+api.responses.write&state=abc",
+        });
+        return creds;
+      },
+    );
+
+    await runCodexOAuth({ isRemote: false });
+
+    expect(onAuthSpy).toHaveBeenCalledTimes(1);
+    const event = onAuthSpy.mock.calls[0]?.[0] as { url: string };
+    expect(event.url).toBe(
+      "https://auth.openai.com/oauth/authorize?scope=openid+profile+api.responses.write&state=abc",
     );
   });
 
