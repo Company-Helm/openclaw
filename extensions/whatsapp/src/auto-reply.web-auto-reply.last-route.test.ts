@@ -55,7 +55,7 @@ function createLastRouteHarness(storePath: string) {
 
 function buildInboundMessage(params: {
   id: string;
-  from: string;
+  from?: string;
   conversationId: string;
   chatType: "direct" | "group";
   chatId: string;
@@ -121,6 +121,36 @@ describe("web auto-reply last-route", () => {
     const stored = await readStoredRoutes(store.storePath);
     expect(stored[mainSessionKey]?.lastChannel).toBe("whatsapp");
     expect(stored[mainSessionKey]?.lastTo).toBe("+1000");
+
+    await store.cleanup();
+  });
+
+  it("updates last-route for direct chats when from is missing but conversationId is present", async () => {
+    const now = Date.now();
+    const mainSessionKey = "agent:main:main";
+    const store = await makeSessionStore({
+      [mainSessionKey]: { sessionId: "sid", updatedAt: now - 1 },
+    });
+
+    const { handler, backgroundTasks } = createLastRouteHarness(store.storePath);
+
+    await expect(
+      handler(
+        buildInboundMessage({
+          id: "m2",
+          conversationId: "+19998887777",
+          chatType: "direct",
+          chatId: "direct:+19998887777",
+          timestamp: now,
+        }),
+      ),
+    ).resolves.toBeUndefined();
+
+    await awaitBackgroundTasks(backgroundTasks);
+
+    const stored = await readStoredRoutes(store.storePath);
+    expect(stored[mainSessionKey]?.lastChannel).toBe("whatsapp");
+    expect(stored[mainSessionKey]?.lastTo).toBe("+19998887777");
 
     await store.cleanup();
   });
