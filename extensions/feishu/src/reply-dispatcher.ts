@@ -14,7 +14,6 @@ import type { MentionTarget } from "./mention.js";
 import { buildMentionedCardContent } from "./mention.js";
 import { getFeishuRuntime } from "./runtime.js";
 import {
-  sendMarkdownCardFeishu,
   sendMessageFeishu,
   sendStructuredCardFeishu,
   type CardHeaderConfig,
@@ -182,6 +181,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
   let streamText = "";
   let lastPartial = "";
   let reasoningText = "";
+  let deferredBlockFallbackText = "";
   const deliveredFinalTexts = new Set<string>();
   let partialUpdateQueue: Promise<void> = Promise.resolve();
   let streamingStartPromise: Promise<void> | null = null;
@@ -296,35 +296,52 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
     reasoningText = "";
   };
 
-  const sendChunkedTextReply = async (params: {
+  const sendTextReply = async (params: {
     text: string;
     useCard: boolean;
     infoKind?: string;
   }) => {
     let first = true;
-    const chunkSource = params.useCard
-      ? params.text
-      : core.channel.text.convertMarkdownTables(params.text, tableMode);
-    for (const chunk of core.channel.text.chunkTextWithMode(
-      chunkSource,
-      textChunkLimit,
-      chunkMode,
-    )) {
-      const message = {
-        cfg,
-        to: chatId,
-        text: chunk,
-        replyToMessageId: sendReplyToMessageId,
-        replyInThread: effectiveReplyInThread,
-        mentions: first ? mentionTargets : undefined,
-        accountId,
-      };
-      if (params.useCard) {
-        await sendMarkdownCardFeishu(message);
-      } else {
-        await sendMessageFeishu(message);
+    if (params.useCard) {
+      const cardHeader = resolveCardHeader(agentId, identity);
+      const cardNote = resolveCardNote(agentId, identity, prefixContext.prefixContext);
+      for (const chunk of core.channel.text.chunkTextWithMode(
+        params.text,
+        textChunkLimit,
+        chunkMode,
+      )) {
+        await sendStructuredCardFeishu({
+          cfg,
+          to: chatId,
+          text: chunk,
+          replyToMessageId: sendReplyToMessageId,
+          replyInThread: effectiveReplyInThread,
+          mentions: first ? mentionTargets : undefined,
+          accountId,
+          header: cardHeader,
+          note: cardNote,
+        });
+        first = false;
       }
-      first = false;
+    } else {
+      const chunkSource = core.channel.text.convertMarkdownTables(params.text, tableMode);
+      for (const chunk of core.channel.text.chunkTextWithMode(
+        chunkSource,
+        textChunkLimit,
+        chunkMode,
+      )) {
+        const message = {
+          cfg,
+          to: chatId,
+          text: chunk,
+          replyToMessageId: sendReplyToMessageId,
+          replyInThread: effectiveReplyInThread,
+          mentions: first ? mentionTargets : undefined,
+          accountId,
+        };
+        await sendMessageFeishu(message);
+        first = false;
+      }
     }
     if (params.infoKind === "final") {
       deliveredFinalTexts.add(params.text);
@@ -338,6 +355,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
       humanDelay: core.channel.reply.resolveHumanDelayConfig(cfg, agentId),
       onReplyStart: () => {
         deliveredFinalTexts.clear();
+        deferredBlockFallbackText = "";
         if (streamingEnabled && renderMode === "card") {
           startStreaming();
         }
@@ -363,7 +381,6 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
 
         if (shouldDeliverText) {
           const useCard = renderMode === "card" || (renderMode === "auto" && shouldUseCard(text));
-          let first = true;
 
           if (info?.kind === "block") {
             // Drop internal block chunks unless we can safely consume them as
@@ -391,6 +408,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
               queueStreamingUpdate(text, { mode: "delta" });
             }
             if (info?.kind === "final") {
+              deferredBlockFallbackText = "";
               streamText = mergeStreamingText(streamText, text);
               await closeStreaming();
               deliveredFinalTexts.add(text);
@@ -411,33 +429,18 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
             return;
           }
 
-          if (useCard) {
-            const cardHeader = resolveCardHeader(agentId, identity);
-            const cardNote = resolveCardNote(agentId, identity, prefixContext.prefixContext);
-            for (const chunk of core.channel.text.chunkTextWithMode(
-              text,
-              textChunkLimit,
-              chunkMode,
-            )) {
-              await sendStructuredCardFeishu({
-                cfg,
-                to: chatId,
-                text: chunk,
-                replyToMessageId: sendReplyToMessageId,
-                replyInThread: effectiveReplyInThread,
-                mentions: first ? mentionTargets : undefined,
-                accountId,
-                header: cardHeader,
-                note: cardNote,
-              });
-              first = false;
-            }
-            if (info?.kind === "final") {
-              deliveredFinalTexts.add(text);
-            }
-          } else {
-            await sendChunkedTextReply({ text, useCard: false, infoKind: info?.kind });
+          if (info?.kind === "block" && streamingEnabled && useCard) {
+            // When streaming setup fails, block payloads are still internal
+            // fragments. Defer their fallback until idle so the final reply can
+            // replace them and we avoid duplicate visible messages.
+            deferredBlockFallbackText = mergeStreamingText(deferredBlockFallbackText, text);
+            return;
           }
+
+          if (info?.kind === "final") {
+            deferredBlockFallbackText = "";
+          }
+          await sendTextReply({ text, useCard, infoKind: info?.kind });
         }
 
         if (hasMedia) {
@@ -462,6 +465,13 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
       },
       onIdle: async () => {
         await closeStreaming();
+        if (deferredBlockFallbackText) {
+          const fallbackText = deferredBlockFallbackText;
+          deferredBlockFallbackText = "";
+          const useCard =
+            renderMode === "card" || (renderMode === "auto" && shouldUseCard(fallbackText));
+          await sendTextReply({ text: fallbackText, useCard, infoKind: "final" });
+        }
         typingCallbacks.onIdle?.();
       },
       onCleanup: () => {

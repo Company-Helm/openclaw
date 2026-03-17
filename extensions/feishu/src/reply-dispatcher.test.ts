@@ -704,4 +704,77 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
       streamingInstances.push = origPush;
     }
   });
+
+  it("does not fall back block chunks into duplicate cards when streaming start fails", async () => {
+    const errorMock = vi.fn();
+    let shouldFailStart = true;
+
+    const origPush = streamingInstances.push;
+    streamingInstances.push = function (this: any[], ...args: any[]) {
+      if (shouldFailStart) {
+        args[0].start = vi
+          .fn()
+          .mockRejectedValue(new Error("Create card request failed with HTTP 400"));
+        shouldFailStart = false;
+      }
+      return origPush.apply(this, args);
+    } as any;
+
+    try {
+      const { options } = createDispatcherHarness({
+        runtime: { log: vi.fn(), error: errorMock } as never,
+      });
+
+      await options.deliver({ text: "```ts\npartial block\n```" }, { kind: "block" });
+      await vi.waitFor(() => {
+        expect(errorMock).toHaveBeenCalledWith(expect.stringContaining("streaming start failed"));
+      });
+      await options.deliver({ text: "```ts\nfinal answer\n```" }, { kind: "final" });
+
+      expect(streamingInstances).toHaveLength(2);
+      expect(sendStructuredCardFeishuMock).not.toHaveBeenCalled();
+      expect(sendMessageFeishuMock).not.toHaveBeenCalled();
+      expect(streamingInstances[1].start).toHaveBeenCalled();
+      expect(streamingInstances[1].close).toHaveBeenCalledWith("```ts\nfinal answer\n```", {
+        note: "Agent: agent",
+      });
+    } finally {
+      streamingInstances.push = origPush;
+    }
+  });
+
+  it("flushes deferred block fallback once on idle after streaming start fails", async () => {
+    const errorMock = vi.fn();
+    const origPush = streamingInstances.push;
+    streamingInstances.push = function (this: any[], ...args: any[]) {
+      args[0].start = vi
+        .fn()
+        .mockRejectedValue(new Error("Create card request failed with HTTP 400"));
+      return origPush.apply(this, args);
+    } as any;
+
+    try {
+      const { options } = createDispatcherHarness({
+        runtime: { log: vi.fn(), error: errorMock } as never,
+      });
+
+      await options.deliver({ text: "```ts\nblock only\n```" }, { kind: "block" });
+      await vi.waitFor(() => {
+        expect(errorMock).toHaveBeenCalledWith(expect.stringContaining("streaming start failed"));
+      });
+      await options.onIdle?.();
+
+      expect(sendStructuredCardFeishuMock).toHaveBeenCalledTimes(1);
+      expect(sendStructuredCardFeishuMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          text: "```ts\nblock only\n```",
+          header: { title: "agent", template: "blue" },
+          note: "Agent: agent",
+        }),
+      );
+      expect(sendMessageFeishuMock).not.toHaveBeenCalled();
+    } finally {
+      streamingInstances.push = origPush;
+    }
+  });
 });
