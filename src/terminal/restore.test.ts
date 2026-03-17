@@ -94,4 +94,20 @@ describe("restoreTerminalState", () => {
     expect(setRawMode).not.toHaveBeenCalled();
     expect(resume).not.toHaveBeenCalled();
   });
+
+  it("resets stdout TTY state including kitty keyboard protocol", () => {
+    configureTerminalIO({
+      stdinIsTTY: false,
+      stdoutIsTTY: true,
+    });
+    const write = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation((() => true) as typeof process.stdout.write);
+
+    restoreTerminalState("test");
+
+    expect(write).toHaveBeenCalledWith(
+      "\x1b[0m\x1b[?25h\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?2004l\x1b[?u",
+    );
+  });
 });
