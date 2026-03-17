@@ -8,7 +8,14 @@ import {
 } from "./session-transcript-repair.js";
 import { castAgentMessage, castAgentMessages } from "./test-helpers/agent-message-fixtures.js";
 
-const TOOL_CALL_BLOCK_TYPES = new Set(["toolCall", "toolUse", "functionCall"]);
+const TOOL_CALL_BLOCK_TYPES = new Set([
+  "toolCall",
+  "toolUse",
+  "functionCall",
+  "tool_call",
+  "tool_use",
+  "function_call",
+]);
 
 function getAssistantToolCallBlocks(messages: AgentMessage[]) {
   const assistant = messages[0] as Extract<AgentMessage, { role: "assistant" }> | undefined;
@@ -266,7 +273,10 @@ describe("sanitizeToolCallInputs", () => {
     const input = castAgentMessages([
       {
         role: "assistant",
-        content: [{ type: "toolCall", id: "call_1", name: "read" }],
+        content: [
+          { type: "toolCall", id: "call_1", name: "read" },
+          { type: "tool_use", id: "call_2", name: "exec" },
+        ],
       },
       { role: "user", content: "hello" },
     ]);
@@ -332,6 +342,7 @@ describe("sanitizeToolCallInputs", () => {
         content: [
           { type: "text", text: "before" },
           { type: "toolUse", id: "call_ok", name: "read", input: { path: "a" } },
+          { type: "tool_use", id: "call_ok_2", name: "exec", input: { command: "pwd" } },
           { type: "toolCall", id: "call_drop", name: "read" },
         ],
       },
@@ -342,7 +353,18 @@ describe("sanitizeToolCallInputs", () => {
     const types = Array.isArray(assistant.content)
       ? assistant.content.map((block) => (block as { type?: unknown }).type)
       : [];
-    expect(types).toEqual(["text", "toolUse"]);
+    expect(types).toEqual(["text", "toolUse", "tool_use"]);
+  });
+
+  it("preserves valid snake_case tool call blocks", () => {
+    const toolCalls = sanitizeAssistantToolCalls([
+      { type: "tool_use", id: "call_1", name: "read", input: { path: "a" } },
+      { type: "tool_call", id: "call_2", name: "exec", arguments: { command: "ls" } },
+      { type: "function_call", id: "call_3", name: "search", arguments: { q: "hi" } },
+    ]);
+
+    const types = toolCalls.map((toolCall) => toolCall.type);
+    expect(types).toEqual(["tool_use", "tool_call", "function_call"]);
   });
 
   it.each([

@@ -12,15 +12,21 @@ type RawToolCallBlock = {
   arguments?: unknown;
 };
 
+const RAW_TOOL_CALL_TYPES = new Set([
+  "toolCall",
+  "toolUse",
+  "functionCall",
+  "tool_call",
+  "tool_use",
+  "function_call",
+]);
+
 function isRawToolCallBlock(block: unknown): block is RawToolCallBlock {
   if (!block || typeof block !== "object") {
     return false;
   }
   const type = (block as { type?: unknown }).type;
-  return (
-    typeof type === "string" &&
-    (type === "toolCall" || type === "toolUse" || type === "functionCall")
-  );
+  return typeof type === "string" && RAW_TOOL_CALL_TYPES.has(type);
 }
 
 function hasToolCallInput(block: RawToolCallBlock): boolean {
@@ -254,42 +260,36 @@ export function repairToolCallInputs(
         continue;
       }
       if (isRawToolCallBlock(block)) {
-        if (
-          (block as { type?: unknown }).type === "toolCall" ||
-          (block as { type?: unknown }).type === "toolUse" ||
-          (block as { type?: unknown }).type === "functionCall"
-        ) {
-          // Only sanitize (redact) sessions_spawn blocks; all others are passed through
-          // unchanged to preserve provider-specific shapes (e.g. toolUse.input for Anthropic).
-          const blockName =
-            typeof (block as { name?: unknown }).name === "string"
-              ? (block as { name: string }).name.trim()
-              : undefined;
-          if (blockName?.toLowerCase() === "sessions_spawn") {
-            const sanitized = sanitizeToolCallBlock(block);
-            if (sanitized !== block) {
+        // Only sanitize (redact) sessions_spawn blocks; all others are passed through
+        // unchanged to preserve provider-specific shapes (e.g. tool_use.input for Anthropic).
+        const blockName =
+          typeof (block as { name?: unknown }).name === "string"
+            ? (block as { name: string }).name.trim()
+            : undefined;
+        if (blockName?.toLowerCase() === "sessions_spawn") {
+          const sanitized = sanitizeToolCallBlock(block);
+          if (sanitized !== block) {
+            changed = true;
+            messageChanged = true;
+          }
+          nextContent.push(sanitized as typeof block);
+        } else {
+          if (typeof (block as { name?: unknown }).name === "string") {
+            const rawName = (block as { name: string }).name;
+            const trimmedName = rawName.trim();
+            if (rawName !== trimmedName && trimmedName) {
+              const renamed = { ...(block as object), name: trimmedName } as typeof block;
+              nextContent.push(renamed);
               changed = true;
               messageChanged = true;
-            }
-            nextContent.push(sanitized as typeof block);
-          } else {
-            if (typeof (block as { name?: unknown }).name === "string") {
-              const rawName = (block as { name: string }).name;
-              const trimmedName = rawName.trim();
-              if (rawName !== trimmedName && trimmedName) {
-                const renamed = { ...(block as object), name: trimmedName } as typeof block;
-                nextContent.push(renamed);
-                changed = true;
-                messageChanged = true;
-              } else {
-                nextContent.push(block);
-              }
             } else {
               nextContent.push(block);
             }
+          } else {
+            nextContent.push(block);
           }
-          continue;
         }
+        continue;
       } else {
         nextContent.push(block);
       }
