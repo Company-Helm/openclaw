@@ -200,6 +200,16 @@ type GroupMeta = {
   contextPercent: number | null;
 };
 
+function readUsageMetric(usage: Record<string, unknown>, keys: readonly string[]): number {
+  for (const key of keys) {
+    const value = usage[key];
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value;
+    }
+  }
+  return 0;
+}
+
 function extractGroupMeta(group: MessageGroup, contextWindow: number | null): GroupMeta | null {
   let input = 0;
   let output = 0;
@@ -208,19 +218,34 @@ function extractGroupMeta(group: MessageGroup, contextWindow: number | null): Gr
   let cost = 0;
   let model: string | null = null;
   let hasUsage = false;
+  let lastInput = 0;
 
   for (const { message } of group.messages) {
     const m = message as Record<string, unknown>;
     if (m.role !== "assistant") {
       continue;
     }
-    const usage = m.usage as Record<string, number> | undefined;
+    const usage = m.usage as Record<string, unknown> | undefined;
     if (usage) {
       hasUsage = true;
-      input += usage.input ?? usage.inputTokens ?? 0;
-      output += usage.output ?? usage.outputTokens ?? 0;
-      cacheRead += usage.cacheRead ?? usage.cache_read_input_tokens ?? 0;
-      cacheWrite += usage.cacheWrite ?? usage.cache_creation_input_tokens ?? 0;
+      const messageInput = readUsageMetric(usage, ["input", "inputTokens", "input_tokens"]);
+      const messageOutput = readUsageMetric(usage, ["output", "outputTokens", "output_tokens"]);
+      const messageCacheRead = readUsageMetric(usage, [
+        "cacheRead",
+        "cache_read_input_tokens",
+        "cache_read_tokens",
+      ]);
+      const messageCacheWrite = readUsageMetric(usage, [
+        "cacheWrite",
+        "cache_creation_input_tokens",
+        "cache_write_input_tokens",
+        "cache_write_tokens",
+      ]);
+      input += messageInput;
+      output += messageOutput;
+      cacheRead += messageCacheRead;
+      cacheWrite += messageCacheWrite;
+      lastInput = messageInput;
     }
     const c = m.cost as Record<string, number> | undefined;
     if (c?.total) {
@@ -236,7 +261,9 @@ function extractGroupMeta(group: MessageGroup, contextWindow: number | null): Gr
   }
 
   const contextPercent =
-    contextWindow && input > 0 ? Math.min(Math.round((input / contextWindow) * 100), 100) : null;
+    contextWindow && lastInput > 0
+      ? Math.min(Math.round((lastInput / contextWindow) * 100), 100)
+      : null;
 
   return { input, output, cacheRead, cacheWrite, cost, model, contextPercent };
 }
