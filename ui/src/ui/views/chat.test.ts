@@ -393,6 +393,36 @@ describe("chat view", () => {
     expect(indicator?.textContent).toContain("Compacting context...");
   });
 
+  it("prefers fresh totalTokens over stale inputTokens for the context warning", () => {
+    const container = document.createElement("div");
+    render(
+      renderChat(
+        createProps({
+          sessions: {
+            ts: 0,
+            path: "",
+            count: 1,
+            defaults: { modelProvider: "openai", model: "gpt-5", contextTokens: null },
+            sessions: [
+              {
+                key: "main",
+                kind: "direct",
+                updatedAt: null,
+                inputTokens: 292_000,
+                totalTokens: 105_000,
+                totalTokensFresh: true,
+                contextTokens: 272_000,
+              },
+            ],
+          },
+        }),
+      ),
+      container,
+    );
+
+    expect(container.querySelector(".context-notice")).toBeNull();
+  });
+
   it("renders completion indicator shortly after compaction", () => {
     const container = document.createElement("div");
     const nowSpy = vi.spyOn(Date, "now").mockReturnValue(1_000);

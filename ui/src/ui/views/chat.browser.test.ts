@@ -80,4 +80,36 @@ describe("chat context notice", () => {
     expect(iconStyle.height).toBe("16px");
     expect(icon.getBoundingClientRect().width).toBeLessThan(24);
   });
+
+  it("prefers fresh totalTokens over stale inputTokens for the context warning", async () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    render(
+      renderChat(
+        createProps({
+          sessions: {
+            ts: 0,
+            path: "",
+            count: 1,
+            defaults: { modelProvider: "openai", model: "gpt-5", contextTokens: null },
+            sessions: [
+              {
+                key: "main",
+                kind: "direct",
+                updatedAt: null,
+                inputTokens: 292_000,
+                totalTokens: 105_000,
+                totalTokensFresh: true,
+                contextTokens: 272_000,
+              },
+            ],
+          },
+        }),
+      ),
+      container,
+    );
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+    expect(container.querySelector(".context-notice")).toBeNull();
+  });
 });
