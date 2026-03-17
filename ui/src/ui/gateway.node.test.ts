@@ -143,7 +143,7 @@ describe("GatewayBrowserClient", () => {
       deviceId: "device-1",
       role: "operator",
       token: "stored-device-token",
-      scopes: ["operator.admin", "operator.approvals", "operator.pairing"],
+      scopes: ["operator.admin", "operator.read", "operator.approvals", "operator.pairing"],
     });
   });
 
@@ -171,11 +171,17 @@ describe("GatewayBrowserClient", () => {
     const connectFrame = JSON.parse(ws.sent.at(-1) ?? "{}") as {
       id?: string;
       method?: string;
-      params?: { auth?: { token?: string } };
+      params?: { auth?: { token?: string }; scopes?: string[] };
     };
     expect(typeof connectFrame.id).toBe("string");
     expect(connectFrame.method).toBe("connect");
     expect(connectFrame.params?.auth?.token).toBe("shared-auth-token");
+    expect(connectFrame.params?.scopes).toEqual([
+      "operator.admin",
+      "operator.read",
+      "operator.approvals",
+      "operator.pairing",
+    ]);
     expect(signDevicePayloadMock).toHaveBeenCalledWith("private-key", expect.any(String));
     const signedPayload = signDevicePayloadMock.mock.calls[0]?.[1];
     expect(signedPayload).toContain("|shared-auth-token|nonce-1");
