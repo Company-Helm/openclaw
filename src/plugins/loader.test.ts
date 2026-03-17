@@ -2443,6 +2443,128 @@ module.exports = {
     expect(registry.channels).toHaveLength(1);
   });
 
+  it("recomputes setup vs full runtime when channel config changes across cached loads", () => {
+    useNoBundledPlugins();
+    clearPluginLoaderCache();
+    const pluginDir = makeTempDir();
+    const fullMarker = path.join(makeTempDir(), "full-loaded.txt");
+    const setupMarker = path.join(makeTempDir(), "setup-loaded.txt");
+    fs.writeFileSync(
+      path.join(pluginDir, "package.json"),
+      JSON.stringify(
+        {
+          name: "@openclaw/setup-runtime-cache-invalidation-test",
+          openclaw: {
+            extensions: ["./index.cjs"],
+            setupEntry: "./setup-entry.cjs",
+          },
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+    fs.writeFileSync(
+      path.join(pluginDir, "openclaw.plugin.json"),
+      JSON.stringify(
+        {
+          id: "setup-runtime-cache-invalidation-test",
+          configSchema: EMPTY_PLUGIN_SCHEMA,
+          channels: ["setup-runtime-cache-invalidation-test"],
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+    fs.writeFileSync(
+      path.join(pluginDir, "index.cjs"),
+      `require("node:fs").writeFileSync(${JSON.stringify(fullMarker)}, "loaded", "utf-8");
+module.exports = {
+  id: "setup-runtime-cache-invalidation-test",
+  register(api) {
+    api.registerChannel({
+      plugin: {
+        id: "setup-runtime-cache-invalidation-test",
+        meta: {
+          id: "setup-runtime-cache-invalidation-test",
+          label: "Setup Runtime Cache Invalidation Test",
+          selectionLabel: "Setup Runtime Cache Invalidation Test",
+          docsPath: "/channels/setup-runtime-cache-invalidation-test",
+          blurb: "full runtime should load after channel config appears",
+        },
+        capabilities: { chatTypes: ["direct"] },
+        config: {
+          listAccountIds: () => ["default"],
+          resolveAccount: () => ({ accountId: "default", token: "configured" }),
+        },
+        outbound: { deliveryMode: "direct" },
+      },
+    });
+  },
+};`,
+      "utf-8",
+    );
+    fs.writeFileSync(
+      path.join(pluginDir, "setup-entry.cjs"),
+      `require("node:fs").writeFileSync(${JSON.stringify(setupMarker)}, "loaded", "utf-8");
+module.exports = {
+  plugin: {
+    id: "setup-runtime-cache-invalidation-test",
+    meta: {
+      id: "setup-runtime-cache-invalidation-test",
+      label: "Setup Runtime Cache Invalidation Test",
+      selectionLabel: "Setup Runtime Cache Invalidation Test",
+      docsPath: "/channels/setup-runtime-cache-invalidation-test",
+      blurb: "setup runtime for unconfigured channel loads",
+    },
+    capabilities: { chatTypes: ["direct"] },
+    config: {
+      listAccountIds: () => ["default"],
+      resolveAccount: () => ({ accountId: "default", token: "configured" }),
+    },
+    outbound: { deliveryMode: "direct" },
+  },
+};`,
+      "utf-8",
+    );
+
+    loadOpenClawPlugins({
+      preferSetupRuntimeForChannelPlugins: true,
+      config: {
+        plugins: {
+          load: { paths: [pluginDir] },
+          allow: ["setup-runtime-cache-invalidation-test"],
+        },
+      },
+    });
+
+    expect(fs.existsSync(setupMarker)).toBe(true);
+    expect(fs.existsSync(fullMarker)).toBe(false);
+
+    fs.rmSync(setupMarker, { force: true });
+    fs.rmSync(fullMarker, { force: true });
+
+    loadOpenClawPlugins({
+      preferSetupRuntimeForChannelPlugins: true,
+      config: {
+        channels: {
+          "setup-runtime-cache-invalidation-test": {
+            enabled: true,
+            token: "configured",
+          },
+        },
+        plugins: {
+          load: { paths: [pluginDir] },
+          allow: ["setup-runtime-cache-invalidation-test"],
+        },
+      },
+    });
+
+    expect(fs.existsSync(fullMarker)).toBe(true);
+    expect(fs.existsSync(setupMarker)).toBe(false);
+  });
+
   it("blocks before_prompt_build but preserves legacy model overrides when prompt injection is disabled", async () => {
     useNoBundledPlugins();
     const plugin = writePlugin({

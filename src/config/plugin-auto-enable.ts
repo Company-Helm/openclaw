@@ -190,6 +190,30 @@ export function isChannelConfigured(
   return isGenericChannelConfigured(cfg, channelId);
 }
 
+export function resolveChannelConfigurationCacheKey(
+  cfg: OpenClawConfig,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const envKeys = new Set<string>();
+  for (const spec of Object.values(STRUCTURED_CHANNEL_CONFIG_SPECS)) {
+    for (const key of spec.envAny ?? []) {
+      envKeys.add(key);
+    }
+    for (const key of spec.envAll ?? []) {
+      envKeys.add(key);
+    }
+  }
+  const envState = Object.fromEntries(
+    Array.from(envKeys)
+      .toSorted()
+      .map((key) => [key, hasNonEmptyString(env[key])]),
+  );
+  return JSON.stringify({
+    channels: cfg.channels ?? null,
+    env: envState,
+  });
+}
+
 function collectModelRefs(cfg: OpenClawConfig): string[] {
   const refs: string[] = [];
   const pushModelRef = (value: unknown) => {
